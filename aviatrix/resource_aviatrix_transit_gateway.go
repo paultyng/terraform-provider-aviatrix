@@ -369,6 +369,18 @@ func resourceAviatrixTransitGateway() *schema.Resource {
 				Optional:    true,
 				Description: "OOB HA availability zone.",
 			},
+			"azure_eip_name_resource_group": {
+				Type:         schema.TypeString,
+				Optional:     true,
+				Description:  "The name of the public IP address and its resource group in Azure to assign to this Transit Gateway.",
+				ValidateFunc: validateAzureEipNameResourceGroup,
+			},
+			"ha_azure_eip_name_resource_group": {
+				Type:         schema.TypeString,
+				Optional:     true,
+				Description:  "The name of the public IP address and its resource group in Azure to assign to the HA Transit Gateway.",
+				ValidateFunc: validateAzureEipNameResourceGroup,
+			},
 			"enable_jumbo_frame": {
 				Type:        schema.TypeBool,
 				Optional:    true,
@@ -555,7 +567,17 @@ func resourceAviatrixTransitGatewayCreate(d *schema.ResourceData, meta interface
 			gateway.ReuseEip = "off"
 		} else {
 			gateway.ReuseEip = "on"
-			gateway.Eip = d.Get("eip").(string)
+
+			if goaviatrix.IsCloudType(gateway.CloudType, goaviatrix.AzureArmRelatedCloudTypes) {
+				// AVX-9874 Azure EIP has a different format e.g. 'test_ip:rg:104.45.186.20'
+				azureEipName, ok := d.GetOk("azure_eip_name_resource_group")
+				if !ok {
+					return fmt.Errorf("failed to create transit gateway: 'azure_eip_name_resource_group' must be set when 'allocate_new_eip' is true and cloud_type is Azure (8), AzureGov (32) or AzureChina (2048)")
+				}
+				gateway.Eip = fmt.Sprintf("%s:%s", azureEipName.(string), d.Get("eip").(string))
+			} else {
+				gateway.Eip = d.Get("eip").(string)
+			}
 		}
 	}
 
@@ -938,6 +960,15 @@ func resourceAviatrixTransitGatewayCreate(d *schema.ResourceData, meta interface
 		if enablePrivateOob {
 			transitGateway.HASubnet = transitGateway.HASubnet + "~~" + haOobAvailabilityZone
 			transitGateway.HAOobManagementSubnet = haOobManagementSubnet + "~~" + haOobAvailabilityZone
+		}
+
+		if goaviatrix.IsCloudType(transitGateway.CloudType, goaviatrix.AzureArmRelatedCloudTypes) && transitGateway.Eip != "" {
+			// AVX-9874 Azure EIP has a different format e.g. 'test_ip:rg:104.45.186.20'
+			haAzureEipName, ok := d.GetOk("ha_azure_eip_name_resource_group")
+			if !ok {
+				return fmt.Errorf("failed to create HA Transit Gateway: 'ha_azure_eip_name_resource_group' must be set when a custom EIP is provided and cloud_type is Azure (8), AzureGov (32) or AzureChina (2048)")
+			}
+			transitGateway.Eip = fmt.Sprintf("%s:%s", haAzureEipName.(string), transitGateway.Eip)
 		}
 
 		log.Printf("[INFO] Enabling HA on Transit Gateway: %#v", haSubnet)
@@ -1354,6 +1385,15 @@ func resourceAviatrixTransitGatewayRead(d *schema.ResourceData, meta interface{}
 	d.Set("enable_multi_tier_transit", gw.EnableMultitierTransit)
 	d.Set("tunnel_detection_time", gw.TunnelDetectionTime)
 
+	if goaviatrix.IsCloudType(gw.CloudType, goaviatrix.AzureArmRelatedCloudTypes) {
+		azureEip := strings.Split(gw.ReuseEip, ":")
+		if len(azureEip) == 3 {
+			d.Set("azure_eip_name_resource_group", fmt.Sprintf("%s:%s", azureEip[0], azureEip[1]))
+		} else {
+			log.Printf("[WARN] could not get Azure EIP name and resource group for the Transit Gateway %s", gw.GwName)
+		}
+	}
+
 	if goaviatrix.IsCloudType(gw.CloudType, goaviatrix.AWSRelatedCloudTypes) {
 		d.Set("vpc_id", strings.Split(gw.VpcID, "~~")[0])
 		d.Set("vpc_reg", gw.VpcRegion)
@@ -1365,15 +1405,11 @@ func resourceAviatrixTransitGatewayRead(d *schema.ResourceData, meta interface{}
 	} else if goaviatrix.IsCloudType(gw.CloudType, goaviatrix.GCPRelatedCloudTypes) {
 		d.Set("vpc_id", strings.Split(gw.VpcID, "~-~")[0])
 		d.Set("vpc_reg", gw.GatewayZone)
-		if gw.AllocateNewEipRead {
-			d.Set("allocate_new_eip", true)
-		} else {
-			d.Set("allocate_new_eip", false)
-		}
+		d.Set("allocate_new_eip", gw.AllocateNewEipRead)
 	} else if goaviatrix.IsCloudType(gw.CloudType, goaviatrix.AzureArmRelatedCloudTypes|goaviatrix.OCIRelatedCloudTypes) {
 		d.Set("vpc_id", gw.VpcID)
 		d.Set("vpc_reg", gw.VpcRegion)
-		d.Set("allocate_new_eip", true)
+		d.Set("allocate_new_eip", gw.AllocateNewEipRead)
 	} else if gw.CloudType == goaviatrix.AliCloud {
 		d.Set("vpc_id", strings.Split(gw.VpcID, "~~")[0])
 		d.Set("vpc_reg", gw.VpcRegion)
@@ -1511,6 +1547,7 @@ func resourceAviatrixTransitGatewayRead(d *schema.ResourceData, meta interface{}
 		d.Set("ha_zone", "")
 		d.Set("ha_insane_mode_az", "")
 		d.Set("ha_eip", "")
+		d.Set("ha_azure_eip_name_resource_group", "")
 		d.Set("ha_oob_management_subnet", "")
 		d.Set("ha_oob_availability_zone", "")
 		return nil
@@ -1562,6 +1599,15 @@ func resourceAviatrixTransitGatewayRead(d *schema.ResourceData, meta interface{}
 		d.Set("ha_insane_mode_az", gw.HaGw.GatewayZone)
 	} else {
 		d.Set("ha_insane_mode_az", "")
+	}
+
+	if goaviatrix.IsCloudType(gw.HaGw.CloudType, goaviatrix.AzureArmRelatedCloudTypes) {
+		azureEip := strings.Split(gw.HaGw.ReuseEip, ":")
+		if len(azureEip) == 3 {
+			d.Set("ha_azure_eip_name_resource_group", fmt.Sprintf("%s:%s", azureEip[0], azureEip[1]))
+		} else {
+			log.Printf("[WARN] could not get Azure EIP name and resource group for the HA Gateway %s", gw.GwName)
+		}
 	}
 
 	return nil
@@ -1621,6 +1667,15 @@ func resourceAviatrixTransitGatewayUpdate(d *schema.ResourceData, meta interface
 			return fmt.Errorf("updating ha_eip is not allowed")
 		}
 	}
+	if d.HasChange("azure_eip_name_resource_group") {
+		return fmt.Errorf("failed to update transit gateway: changing 'azure_eip_name_resource_group' is not allowed")
+	}
+	if d.HasChange("ha_azure_eip_name_resource_group") {
+		o, n := d.GetChange("ha_azure_eip_name_resource_group")
+		if o.(string) != "" && n.(string) != "" {
+			return fmt.Errorf("failed to update transit gateway: changing 'ha_azure_eip_name_resource_group' is not allowed")
+		}
+	}
 	if d.HasChange("lan_vpc_id") {
 		return fmt.Errorf("updating lan_vpc_id is not allowed")
 	}
@@ -1674,8 +1729,18 @@ func resourceAviatrixTransitGatewayUpdate(d *schema.ResourceData, meta interface
 			GwSize:    d.Get("ha_gw_size").(string),
 		}
 
-		if goaviatrix.IsCloudType(transitGw.CloudType, goaviatrix.AWSRelatedCloudTypes|goaviatrix.GCPRelatedCloudTypes) {
-			transitGw.Eip = d.Get("ha_eip").(string)
+		haEip := d.Get("ha_eip").(string)
+		if goaviatrix.IsCloudType(transitGw.CloudType, goaviatrix.AWSRelatedCloudTypes|goaviatrix.GCPRelatedCloudTypes|goaviatrix.OCIRelatedCloudTypes) {
+			transitGw.Eip = haEip
+		} else if goaviatrix.IsCloudType(transitGw.CloudType, goaviatrix.AzureArmRelatedCloudTypes) && haEip != "" && transitGw.GwSize != "" {
+			// No change will be detected when ha_eip is set to the empty string because it is computed.
+			// Instead, check ha_gw_size to detect when HA gateway is being deleted.
+			haAzureEipName, ok := d.GetOk("ha_azure_eip_name_resource_group")
+			if !ok {
+				return fmt.Errorf("failed to create HA Transit Gateway: 'ha_azure_eip_name_resource_group' must be set when a custom EIP is provided and cloud_type is Azure (8), AzureGov (32) or AzureChina (2048)")
+			}
+			// AVX-9874 Azure EIP has a different format e.g. 'test_ip:rg:104.45.186.20'
+			transitGw.Eip = fmt.Sprintf("%s:%s", haAzureEipName.(string), haEip)
 		}
 
 		if !d.HasChange("ha_subnet") && d.HasChange("ha_insane_mode_az") {
@@ -1957,24 +2022,21 @@ func resourceAviatrixTransitGatewayUpdate(d *schema.ResourceData, meta interface
 				// (when ha gateway is enabled, it's size is by default the same as primary gateway)
 				_, err := client.GetGateway(haGateway)
 				if err != nil {
-					if err == goaviatrix.ErrNotFound {
-						d.Set("ha_gw_size", "")
-						d.Set("ha_subnet", "")
-						d.Set("ha_zone", "")
-						d.Set("ha_insane_mode_az", "")
-						return nil
+					// If HA gateway does not exist, don't try to change HA gateway size and continue with the rest of the updates
+					// to the gateway
+					if err != goaviatrix.ErrNotFound {
+						return fmt.Errorf("couldn't find Aviatrix Transit HA Gateway while trying to update HA Gw size: %s", err)
 					}
-					return fmt.Errorf("couldn't find Aviatrix Transit HA Gateway while trying to update HA Gw size: %s", err)
-				}
-
-				if haGateway.GwSize == "" {
-					return fmt.Errorf("A valid non empty ha_gw_size parameter is mandatory for this resource if " +
-						"ha_subnet or ha_zone is set")
-				}
-				err = client.UpdateGateway(haGateway)
-				log.Printf("[INFO] Updating HA Gateway size to: %s ", haGateway.GwSize)
-				if err != nil {
-					return fmt.Errorf("failed to update Aviatrix Transit HA Gateway size: %s", err)
+				} else {
+					if haGateway.GwSize == "" {
+						return fmt.Errorf("A valid non empty ha_gw_size parameter is mandatory for this resource if " +
+							"ha_subnet or ha_zone is set")
+					}
+					err = client.UpdateGateway(haGateway)
+					log.Printf("[INFO] Updating HA Gateway size to: %s ", haGateway.GwSize)
+					if err != nil {
+						return fmt.Errorf("failed to update Aviatrix Transit HA Gateway size: %s", err)
+					}
 				}
 			}
 		}
@@ -2280,26 +2342,28 @@ func resourceAviatrixTransitGatewayUpdate(d *schema.ResourceData, meta interface
 		if d.HasChange("ha_gw_size") || newHaGwEnabled {
 			newHaGwSize := d.Get("ha_gw_size").(string)
 			if !newHaGwEnabled || (newHaGwSize != primaryGwSize) {
+				// MODIFIES HA GW SIZE if
+				// Ha gateway wasn't newly configured
+				// OR
+				// newly configured Ha gateway is set to be different size than primary gateway
+				// (when ha gateway is enabled, it's size is by default the same as primary gateway)
 				_, err := client.GetGateway(haGateway)
 				if err != nil {
-					if err == goaviatrix.ErrNotFound {
-						d.Set("ha_gw_size", "")
-						d.Set("ha_subnet", "")
-						d.Set("ha_zone", "")
-						d.Set("ha_insane_mode_az", "")
-						return nil
+					// If HA gateway does not exist, don't try to change gateway size and continue with the rest of the updates
+					// to the gateway
+					if err != goaviatrix.ErrNotFound {
+						return fmt.Errorf("couldn't find Aviatrix Transit HA Gateway while trying to update HA Gw size: %s", err)
 					}
-					return fmt.Errorf("couldn't find Aviatrix Transit HA Gateway while trying to update HA Gw size: %s", err)
-				}
-
-				if haGateway.GwSize == "" {
-					return fmt.Errorf("A valid non empty ha_gw_size parameter is mandatory for this resource if " +
-						"ha_subnet or ha_zone is set")
-				}
-				err = client.UpdateGateway(haGateway)
-				log.Printf("[INFO] Updating HA Gateway size to: %s ", haGateway.GwSize)
-				if err != nil {
-					return fmt.Errorf("failed to update Aviatrix Transit HA Gateway size: %s", err)
+				} else {
+					if haGateway.GwSize == "" {
+						return fmt.Errorf("A valid non empty ha_gw_size parameter is mandatory for this resource if " +
+							"ha_subnet or ha_zone is set")
+					}
+					err = client.UpdateGateway(haGateway)
+					log.Printf("[INFO] Updating HA Gateway size to: %s ", haGateway.GwSize)
+					if err != nil {
+						return fmt.Errorf("failed to update Aviatrix Transit HA Gateway size: %s", err)
+					}
 				}
 			}
 		}

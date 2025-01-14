@@ -54,18 +54,17 @@ type EdgeMegaport struct {
 }
 
 type EdgeMegaportInterface struct {
-	Type          string              `json:"type"`
-	Index         int                 `json:"index"`
-	PublicIp      string              `json:"public_ip,omitempty"`
-	Tag           string              `json:"tag,omitempty"`
-	Dhcp          bool                `json:"dhcp,omitempty"`
-	IpAddr        string              `json:"ipaddr,omitempty"`
-	GatewayIp     string              `json:"gateway_ip,omitempty"`
-	DnsPrimary    string              `json:"dns_primary,omitempty"`
-	DnsSecondary  string              `json:"dns_secondary,omitempty"`
-	SubInterfaces []*EdgeMegaportVlan `json:"subinterfaces,omitempty"`
-	VrrpState     bool                `json:"vrrp_state,omitempty"`
-	VirtualIp     string              `json:"virtual_ip,omitempty"`
+	LogicalInterfaceName string              `json:"logical_ifname"`
+	PublicIp             string              `json:"public_ip,omitempty"`
+	Tag                  string              `json:"tag,omitempty"`
+	Dhcp                 bool                `json:"dhcp,omitempty"`
+	IpAddr               string              `json:"ipaddr,omitempty"`
+	GatewayIp            string              `json:"gateway_ip,omitempty"`
+	DnsPrimary           string              `json:"dns_primary,omitempty"`
+	DnsSecondary         string              `json:"dns_secondary,omitempty"`
+	SubInterfaces        []*EdgeMegaportVlan `json:"subinterfaces,omitempty"`
+	VrrpState            bool                `json:"vrrp_state,omitempty"`
+	VirtualIp            string              `json:"virtual_ip,omitempty"`
 }
 
 type EdgeMegaportVlan struct {
@@ -129,19 +128,18 @@ type EdgeMegaportListResp struct {
 }
 
 type MegaportInterface struct {
-	Index         int     `json:"index"`
-	Type          string  `json:"type"`
-	Name          string  `json:"ifname,omitempty"`
-	PublicIp      string  `json:"public_ip,omitempty"`
-	Tag           string  `json:"tag,omitempty"`
-	Dhcp          bool    `json:"dhcp,omitempty"`
-	IpAddr        string  `json:"ipaddr,omitempty"`
-	GatewayIp     string  `json:"gateway_ip,omitempty"`
-	DnsPrimary    string  `json:"dns_primary,omitempty"`
-	DnsSecondary  string  `json:"dns_secondary,omitempty"`
-	SubInterfaces []*Vlan `json:"subinterfaces,omitempty"`
-	VrrpState     bool    `json:"vrrp_state,omitempty"`
-	VirtualIp     string  `json:"virtual_ip,omitempty"`
+	LogicalInterfaceName string  `json:"logical_ifname"`
+	Name                 string  `json:"ifname,omitempty"`
+	PublicIp             string  `json:"public_ip,omitempty"`
+	Tag                  string  `json:"tag,omitempty"`
+	Dhcp                 bool    `json:"dhcp,omitempty"`
+	IpAddr               string  `json:"ipaddr,omitempty"`
+	GatewayIp            string  `json:"gateway_ip,omitempty"`
+	DnsPrimary           string  `json:"dns_primary,omitempty"`
+	DnsSecondary         string  `json:"dns_secondary,omitempty"`
+	SubInterfaces        []*Vlan `json:"subinterfaces,omitempty"`
+	VrrpState            bool    `json:"vrrp_state,omitempty"`
+	VirtualIp            string  `json:"virtual_ip,omitempty"`
 }
 
 type CreateEdgeMegaportResp struct {
